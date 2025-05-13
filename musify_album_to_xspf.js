@@ -14,8 +14,11 @@
     // Selector for the album header
     const albumHeaderSelector = 'header.content__title h1';
 
-    // Selector for the album image
+    // Selector for the album image (still needed to get the URL)
     const albumImageSelector = 'img.album-img';
+
+    // Selector to check if the page is an Album page
+    const albumInfoListSelector = 'ul.album-info';
 
 
     // --- XML Escaping Helper ---
@@ -36,8 +39,21 @@
     // --- End XML Escaping Helper ---
 
 
+    // --- Check if it's an Album Page ---
+    const albumInfoList = document.querySelector(albumInfoListSelector);
+    const isAlbumPage = !!albumInfoList; // true if element found, false otherwise
+
+    if (isAlbumPage) {
+        console.log('Detected page structure is for an Album (found ul.album-info). Image tag will be added to EACH TRACK.');
+    } else {
+        console.log('Detected page structure is NOT for an Album (ul.album-info not found). Image tag will be added to the PLAYLIST level.');
+    }
+    // --- End Check if it's an Album Page ---
+
+
     // --- Extract Album Info and Image (for filename suggestion and XSPF tags) ---
-    // This logic runs once before processing tracks
+    // This logic runs once before processing tracks.
+    // Album image URL is extracted REGARDLESS of isAlbumPage, as it might be needed for playlist level.
     let albumArtist = 'Unknown Artist';
     let albumTitle = 'Unknown Album';
     let albumYear = 'UnknownYear';
@@ -45,7 +61,7 @@
     let suggestedFilename = 'playlist.xspf'; // Default fallback filename for XSPF
 
     const albumHeaderElement = document.querySelector(albumHeaderSelector);
-    const albumImageElement = document.querySelector(albumImageSelector); // Find the album image element
+    const albumImageElement = document.querySelector(albumImageSelector); // Find the album image element REGARDLESS of page type
 
 
     if (albumHeaderElement) {
@@ -86,12 +102,12 @@
          console.warn(`Album header (${albumHeaderSelector}) not found. Cannot suggest filename or populate album tag.`);
     }
 
-    // --- Image URL Extraction ---
+    // --- Image URL Extraction (Now happens regardless of isAlbumPage) ---
     if (albumImageElement) {
         if (albumImageElement.src) {
             // Get the absolute image URL from the src property
             albumImageUrl = albumImageElement.src;
-            console.log(`[Album Image] Found image URL: ${albumImageUrl}`);
+            console.log(`[Album Image] Found potential album image URL: ${albumImageUrl}`);
         } else {
              console.warn(`[Album Image] Album image element (${albumImageSelector}) found, but src attribute is empty.`);
         }
@@ -106,7 +122,7 @@
     // This array will store the XML string for each <track> element
     const xspfTrackEntries = [];
 
-    console.log('--- Starting XSPF Playlist Extraction (with Duration, Artist, Track, Track Number, Playlist Location, and Playlist Image) ---'); // Updated log message
+    console.log('--- Starting XSPF Playlist Extraction ---'); // Updated log message
 
     if (actionAnchorElements.length > 0) {
         actionAnchorElements.forEach(function(actionAnchor, index) {
@@ -205,9 +221,20 @@
                      }
 
                      // Add album title (from the extracted album info, assuming it applies to all tracks)
+                     // This is added regardless of isAlbumPage, as it's part of the track metadata if found
                      if (albumTitle !== 'Unknown Album') {
                          trackXml += `      <album>${escapeXml(albumTitle)}</album>\n`;
                      }
+
+                     // --- Conditionally Add Track Image Tag ---
+                     // Add the image tag *only if* it's an album page AND an album image URL was found
+                     if (isAlbumPage && albumImageUrl) {
+                          trackXml += `      <image>${escapeXml(albumImageUrl)}</image>\n`; // Add the tag, escaped and indented
+                     } else if (isAlbumPage && !albumImageUrl) {
+                          // Warning already issued during initial extraction if image not found on album page
+                     } // else if !isAlbumPage, image is handled at playlist level
+                     // --- End Conditionally Add Track Image Tag ---
+
 
                      // --- Add Track Number Tag ---
                      if (trackNumber !== null) { // Only add the tag if a number was successfully extracted
@@ -241,7 +268,7 @@
             let xspfContent = '<?xml version="1.0" encoding="UTF-8"?>\n';
             xspfContent += '<playlist version="1.0" xmlns="http://xspf.org/ns/0/">\n';
 
-            // --- Add Playlist Location Tag ---
+            // --- Add Playlist Location Tag --- (Keep this)
             const pageUrl = location.href; // Get the current page URL
             if (pageUrl) {
                  xspfContent += `  <location>${escapeXml(pageUrl)}</location>\n`; // Add the tag, escaped and indented
@@ -250,13 +277,16 @@
             }
             // --- End Add Playlist Location Tag ---
 
-            // --- Add Playlist Image Tag ---
-            if (albumImageUrl) { // Only add the tag if an image URL was found
-                 xspfContent += `  <image>${escapeXml(albumImageUrl)}</image>\n`; // Add the tag, escaped and indented
-            } else {
-                 console.warn('Album image URL unknown, <image> tag omitted for playlist.');
-            }
-            // --- End Add Playlist Image Tag ---
+            // --- Conditionally Add Playlist Image Tag ---
+            // Add the image tag *only if* it's NOT an album page AND an album image URL was found
+            if (!isAlbumPage && albumImageUrl) {
+                xspfContent += `  <image>${escapeXml(albumImageUrl)}</image>\n`; // Add the tag, escaped and indented
+                console.log('Added playlist-level <image> tag.'); // Informative log
+            } else if (!isAlbumPage && !albumImageUrl) {
+                 console.warn('Playlist page detected, but no album image URL found. <image> tag omitted for playlist.');
+            } // else if isAlbumPage, image is handled at track level
+            // --- End Conditionally Add Playlist Image Tag ---
+
 
             // Optional: Add playlist title from album info (still removed as per previous request)
 
