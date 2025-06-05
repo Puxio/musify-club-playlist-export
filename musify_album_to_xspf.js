@@ -1,6 +1,6 @@
 (function() {
     // Selector for the action links (those containing the track's URL)
-    const actionLinkSelector = 'div.playlist div.playlist__item div.playlist__actions a';
+    const actionLinkSelector = 'div.playlist div.playlist__item div.playlist__actions a[download]';
 
     // Selector to find artist and track links *within* a playlist__item element.
     const headingLinksRelativeSelector = 'div.playlist__details div.playlist__heading a';
