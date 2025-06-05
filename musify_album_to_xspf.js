@@ -301,13 +301,20 @@
             // --- End XSPF content construction ---
 
 
-            console.log('--- XSPF Playlist Content ---');
-            console.log(xspfContent);
-            console.log('--- End XSPF Playlist Content ---');
+            // --- Download the XSPF file ---
+            const blob = new Blob([xspfContent], { type: 'application/xspf+xml' });
+            const url = URL.createObjectURL(blob);
 
-            // The filename suggestion logic was moved up
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = suggestedFilename; // Use the suggested filename
+            document.body.appendChild(a); // Append to body (can be invisible)
+            a.click(); // Programmatically click the link to trigger download
+            document.body.removeChild(a); // Clean up the element
+            URL.revokeObjectURL(url); // Release the object URL
 
-            console.log('Copy the text between the "--- XSPF Playlist Content ---" separators and save it to a file named e.g., "' + suggestedFilename + '"');
+            console.log(`XSPF file "${suggestedFilename}" downloaded successfully.`);
+            // --- End Download ---
 
         } else {
              console.warn('No valid XSPF tracks created. Verify the HTML structure and the presence of href, duration, and heading.');
