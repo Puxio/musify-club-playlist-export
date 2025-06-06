@@ -2,9 +2,6 @@
     // Selector for the action links (those containing the track's URL)
     const actionLinkSelector = 'div.playlist div.playlist__item div.playlist__actions a[download]';
 
-    // Selector to find artist and track links *within* a playlist__item element.
-    const headingLinksRelativeSelector = 'div.playlist__details div.playlist__heading a';
-
     // CORRECT Selector to find the element containing the duration *within* a playlist__item element.
     const durationElementRelativeSelector = 'div.track__details:not(.track__rating) span.text-muted';
 
@@ -67,53 +64,43 @@
             console.warn(`[Album Artist] Element with itemprop="byArtist" inside ${albumInfoListSelector} not found. Defaulting to Unknown Artist.`);
         }
 
-        // --- NEW: Extract albumYear using itemprop/sibling if it's an album page ---
-        const datePublishedSiblingLink = document.querySelector(`${albumInfoListSelector} [itemprop=datePublished] ~ a`);
-        if (datePublishedSiblingLink) {
-            const yearText = datePublishedSiblingLink.textContent.trim();
-            const yearMatch = yearText.match(/\d{4}/); // Match a 4-digit number (e.g., 1997)
-            if (yearMatch && yearMatch[0]) {
-                albumYear = yearMatch[0];
-                console.log(`[Album Year] Found album year via itemprop sibling: ${albumYear}`);
+        // --- NEW LOGIC: Extract albumYear using datetime attribute ---
+        const datePublishedElement = document.querySelector(`${albumInfoListSelector} [itemprop=datePublished]`);
+        if (datePublishedElement && datePublishedElement.hasAttribute('datetime')) {
+            const datetimeValue = datePublishedElement.getAttribute('datetime');
+            if (datetimeValue && datetimeValue.length >= 4) {
+                albumYear = datetimeValue.slice(0, 4); // Take the first 4 characters
+                console.log(`[Album Year] Found album year via datetime attribute: ${albumYear}`);
             } else {
-                console.warn(`[Album Year] Element with itemprop="datePublished" ~ a found, but could not extract 4-digit year from "${yearText}". Defaulting to UnknownYear.`);
+                console.warn(`[Album Year] Element with itemprop="datePublished" found, but datetime attribute is invalid or too short ("${datetimeValue}"). Defaulting to UnknownYear.`);
             }
         } else {
-            console.warn(`[Album Year] Element with itemprop="datePublished" ~ a not found. Defaulting to UnknownYear.`);
+            console.warn(`[Album Year] Element with itemprop="datePublished" or its datetime attribute not found. Defaulting to UnknownYear.`);
         }
     }
 
 
-    // --- OLD LOGIC (modified): Extract albumTitle from header ---
-    // This is still useful for filename suggestion and the <album> tag in tracks.
+    // --- Extract albumTitle from header (remains mostly same, just uses updated albumArtist/Year) ---
     const albumHeaderElement = document.querySelector(albumHeaderSelector);
     if (albumHeaderElement) {
          const headerText = albumHeaderElement.textContent.trim();
-         let potentialTitleText = headerText; // Start with full text
+         let potentialTitleText = headerText;
 
-         // If we have an albumArtist from itemprop, and the header starts with it, try to remove it
-         // to get a cleaner title.
          if (albumArtist !== 'Unknown Artist' && potentialTitleText.startsWith(albumArtist)) {
             if (potentialTitleText.startsWith(`${albumArtist} - `)) {
                 potentialTitleText = potentialTitleText.substring(`${albumArtist} - `.length).trim();
             }
          }
 
-         // If we have an albumYear from itemprop, and the header ends with it, try to remove it.
-         // This makes the title extraction more robust.
          if (albumYear !== 'UnknownYear' && potentialTitleText.endsWith(`(${albumYear})`)) {
              potentialTitleText = potentialTitleText.substring(0, potentialTitleText.lastIndexOf(`(${albumYear})`)).trim();
-         } else if (albumYear !== 'UnknownYear' && potentialTitleText.endsWith(`${albumYear}`)) { // Less common, but just in case
-             potentialTitleText = potentialTitleText.substring(0, potentialTitleText.lastIndexOf(`${albumYear}`)).trim();
+         } else if (albumYear !== 'UnknownYear' && potentialTitleText.endsWith(`${albumYear}`)) {
+             potentialTitleText = potentialHext.substring(0, potentialTitleText.lastIndexOf(`${albumYear}`)).trim();
          }
 
-
-         // The remaining potentialTitleText should now be a good candidate for albumTitle.
          albumTitle = potentialTitleText || 'Unknown Album';
          console.log(`[Album Title] Extracted from header: ${albumTitle}`);
 
-         // Construct the suggested filename: artist_dell_album (anno_dell_album) - titolo_dell_album.xspf
-         // Ensure albumArtist and albumYear are used here even if they came from itemprop
          suggestedFilename = `${albumArtist} (${albumYear}) - ${albumTitle}.xspf`.replace(/[\\/:*?"<>|]/g, '_');
 
          console.log(`Suggested filename: ${suggestedFilename}`);
@@ -135,133 +122,109 @@
         console.warn(`[Album Image] Album image element (${albumImageSelector}) not found.`);
     }
     // --- End Image URL Extraction ---
-    // --- End Extract Album Info and Image ---
 
 
-    const actionAnchorElements = document.querySelectorAll(actionLinkSelector);
+    // --- Core Playlist Item Processing (remains same) ---
+    const allPlaylistItems = document.querySelectorAll('.playlist__item');
     const xspfTrackEntries = [];
 
     console.log('--- Starting XSPF Playlist Extraction ---');
 
-    if (actionAnchorElements.length > 0) {
-        actionAnchorElements.forEach(function(actionAnchor, index) {
-             if (actionAnchor.href) {
-                 const url = actionAnchor.href;
+    if (allPlaylistItems.length > 0) {
+        allPlaylistItems.forEach(function(playlistItem, index) {
+            const actionAnchor = playlistItem.querySelector(actionLinkSelector);
+            let url = null;
 
-                 let durationInSeconds = -1;
-                 let trackTitle = 'Unknown Track';
-                 let trackArtist = 'Unknown Artist';
-                 let trackNumber = null;
+            if (actionAnchor && actionAnchor.href) {
+                url = actionAnchor.href;
+            } else {
+                console.warn(`[Item Index ${index}] No valid download link found within this .playlist__item.`);
+                return;
+            }
 
+            let durationInSeconds = -1;
+            let trackTitle = 'Unknown Track';
+            let trackArtist = 'Unknown Artist';
+            let trackNumber = null;
 
-                 const playlistItem = actionAnchor.closest('.playlist__item');
+            // --- Logica per Artista e Titolo della Traccia (come concordato) ---
+            const artistLink = playlistItem.querySelector('a');
+            if (artistLink) {
+                trackArtist = artistLink.textContent.trim() || 'Unknown Artist';
+            } else {
+                console.warn(`[Item Index ${index}] Could not find artist <a> link. Defaulting to Unknown Artist.`);
+            }
 
-                 if (playlistItem) {
-                     // --- Duration Extraction ---
-                     const durationElement = playlistItem.querySelector(durationElementRelativeSelector);
+            const trackLinkStrong = playlistItem.querySelector('a.strong');
+            if (trackLinkStrong) {
+                trackTitle = trackLinkStrong.textContent.trim() || 'Unknown Track';
+            } else {
+                console.warn(`[Item Index ${index}] Could not find track <a>.strong link. Defaulting to Unknown Track.`);
+            }
+            // --- Fine Logica Artista/Titolo Traccia ---
 
-                     if (durationElement) {
-                         const durationText = durationElement.textContent.trim();
-                         const timeParts = durationText.split(':');
+            // --- Duration Extraction (rimane invariata) ---
+            const durationElement = playlistItem.querySelector(durationElementRelativeSelector);
+            if (durationElement) {
+                const durationText = durationElement.textContent.trim();
+                const timeParts = durationText.split(':');
+                if (timeParts.length === 2) {
+                    const minutes = parseInt(timeParts[0], 10);
+                    const seconds = parseInt(timeParts[1], 10);
+                    if (!isNaN(minutes) && !isNaN(seconds)) {
+                        durationInSeconds = (minutes * 60) + seconds;
+                        if (durationInSeconds < 0) durationInSeconds = -1;
+                    } else {
+                        console.warn(`[Item Index ${index}] Could not convert minutes/seconds "${durationText}" to numbers.`);
+                    }
+                } else {
+                    console.warn(`[Item Index ${index}] Unexpected duration format "${durationText}" (expected MM:SS).`);
+                }
+            } else {
+                console.warn(`[Item Index ${index}] Duration element (${durationElementRelativeSelector}) not found in item.`);
+            }
+            // --- End Duration Extraction ---
 
-                         if (timeParts.length === 2) {
-                             const minutes = parseInt(timeParts[0], 10);
-                             const seconds = parseInt(timeParts[1], 10);
+            // --- Track Number Extraction (rimane invariata) ---
+            const trackNumElement = playlistItem.querySelector(trackNumberElementRelativeSelector);
+            if (trackNumElement) {
+                const numText = trackNumElement.textContent.trim();
+                if (numText !== '') {
+                    trackNumber = numText;
+                } else {
+                    console.warn(`[Item Index ${index}] ${trackNumberElementRelativeSelector} element found, but text content is empty.`);
+                }
+            } else {
+                console.warn(`[Item Index ${index}] ${trackNumberElementRelativeSelector} element not found for item.`);
+            }
+            // --- End Track Number Extraction ---
 
-                             if (!isNaN(minutes) && !isNaN(seconds)) {
-                                 durationInSeconds = (minutes * 60) + seconds;
-                                 if (durationInSeconds < 0) durationInSeconds = -1;
-                             } else {
-                                 console.warn(`[Item Index ${index}] Could not convert minutes/seconds "${durationText}" to numbers.`);
-                             }
-                         } else {
-                             console.warn(`[Item Index ${index}] Unexpected duration format "${durationText}" (atteso MM:SS).`);
-                         }
-                     } else {
-                         console.warn(`[Item Index ${index}] Duration element (${durationElementRelativeSelector}) not found in item.`);
-                     }
-                     // --- End Duration Extraction ---
+            // --- Construct XSPF <track> Entry (rimane invariata nella struttura) ---
+            let trackXml = '    <track>\n';
+            trackXml += `      <location>${escapeXml(url)}</location>\n`;
+            if (durationInSeconds !== -1) {
+                const durationInMilliseconds = durationInSeconds * 1000;
+                trackXml += `      <duration>${durationInMilliseconds}</duration>\n`;
+            } else {
+                console.warn(`[Item Index ${index}] Duration unknown, <duration> tag omitted.`);
+            }
+            if (trackArtist !== 'Unknown Artist') {
+                trackXml += `      <creator>${escapeXml(trackArtist)}</creator>\n`;
+            }
+            if (trackTitle !== 'Unknown Track') {
+                trackXml += `      <title>${escapeXml(trackTitle)}</title>\n`;
+            }
+            if (albumTitle !== 'Unknown Album') {
+                trackXml += `      <album>${escapeXml(albumTitle)}</album>\n`;
+            }
+            if (trackNumber !== null) {
+                trackXml += `      <trackNum>${escapeXml(trackNumber)}</trackNum>\n`;
+            } else {
+                console.warn(`[Item Index ${index}] <trackNum> tag omitted due to missing/empty position.`);
+            }
+            trackXml += '    </track>';
 
-
-                     // --- Title Extraction (Artist & Track) ---
-                     const headingLinks = playlistItem.querySelectorAll(headingLinksRelativeSelector);
-
-                     if (headingLinks.length >= 2) {
-                         const artistElement = headingLinks[0];
-                         const trackElement = headingLinks[1];
-
-                         trackArtist = artistElement.textContent.trim() || 'Unknown Artist';
-                         trackTitle = trackElement.textContent.trim() || 'Unknown Track';
-                     } else {
-                          console.warn(`[Item Index ${index}] Could not find the two Artist/Track links in the item's heading.`);
-                     }
-                     // --- End Title Extraction ---
-
-                     // --- Track Number Extraction ---
-                     const trackNumElement = playlistItem.querySelector(trackNumberElementRelativeSelector);
-
-                     if (trackNumElement) {
-                         const numText = trackNumElement.textContent.trim();
-                         if (numText !== '') {
-                              trackNumber = numText;
-                         } else {
-                              console.warn(`[Item Index ${index}] ${trackNumberElementRelativeSelector} element found, but text content is empty.`);
-                         }
-                     } else {
-                         console.warn(`[Item Index ${index}] ${trackNumberElementRelativeSelector} element not found for item.`);
-                     }
-                     // --- End Track Number Extraction ---
-
-
-                     // --- Construct XSPF <track> Entry ---
-                     let trackXml = '    <track>\n';
-
-                     trackXml += `      <location>${escapeXml(url)}</location>\n`;
-
-                     if (durationInSeconds !== -1) {
-                         const durationInMilliseconds = durationInSeconds * 1000;
-                         trackXml += `      <duration>${durationInMilliseconds}</duration>\n`;
-                     } else {
-                         console.warn(`[Item Index ${index}] Duration unknown, <duration> tag omitted.`);
-                     }
-
-                     if (trackArtist !== 'Unknown Artist') {
-                          trackXml += `      <creator>${escapeXml(trackArtist)}</creator>\n`;
-                     }
-
-                     if (trackTitle !== 'Unknown Track') {
-                          trackXml += `      <title>${escapeXml(trackTitle)}</title>\n`;
-                     }
-
-                     // Add album title (from the extracted album info)
-                     if (albumTitle !== 'Unknown Album') {
-                         trackXml += `      <album>${escapeXml(albumTitle)}</album>\n`;
-                     }
-
-                     // --- Conditionally Add Track Image Tag --- (Still removed)
-                     // --- End Conditionally Add Track Image Tag ---
-
-
-                     // --- Add Track Number Tag ---
-                     if (trackNumber !== null) {
-                          trackXml += `      <trackNum>${escapeXml(trackNumber)}</trackNum>\n`;
-                     } else {
-                         console.warn(`[Item Index ${index}] <trackNum> tag omitted due to missing/empty position.`);
-                     }
-                     // --- End Add Track Number Tag ---
-
-
-                     trackXml += '    </track>';
-
-                     xspfTrackEntries.push(trackXml);
-
-                 } else {
-                      console.warn(`[Item Index ${index}] The action link element is not contained within an expected .playlist__item parent.`);
-                 }
-
-             } else {
-                 console.warn(`[Item Index ${index}] Found an action link element matching the selector but without a valid href attribute.`);
-             }
+            xspfTrackEntries.push(trackXml);
         });
 
 
@@ -313,13 +276,12 @@
             URL.revokeObjectURL(url);
 
             console.log(`XSPF file "${suggestedFilename}" downloaded successfully.`);
-            // --- End Download ---
 
         } else {
              console.warn('No valid XSPF tracks created. Verify the HTML structure and the presence of href, duration, and heading.');
         }
     } else {
-        console.warn(`No action link element found with the initial selector:\n${actionLinkSelector}`);
+        console.warn(`No .playlist__item elements found on the page.`);
     }
     console.log('--- End Processing ---');
 })();
