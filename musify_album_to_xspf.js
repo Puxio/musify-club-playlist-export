@@ -11,20 +11,19 @@
     // Selector for the track position/number *within* a playlist__item element.
     const trackNumberElementRelativeSelector = 'div.playlist__position';
 
-    // Selector for the album header
+    // Selector for the album header (still used for album title, but not year or artist directly)
     const albumHeaderSelector = 'header.content__title h1';
 
     // Selector for the album image (still needed to get the URL)
     const albumImageSelector = 'img.album-img';
 
-    // Selector to check if the page is an Album page
+    // Selector to check if the page is an Album page (and base for itemprop extractions)
     const albumInfoListSelector = 'ul.album-info';
 
 
     // --- XML Escaping Helper ---
-    // Function to escape characters that have special meaning in XML
     const escapeXml = (unsafe) => {
-       if (unsafe === null || unsafe === undefined) return ''; // Handle null or undefined
+       if (unsafe === null || unsafe === undefined) return '';
        return unsafe.toString().replace(/[<>&'"]/g, function (c) {
            switch (c) {
                case '<': return '&lt;';
@@ -33,7 +32,7 @@
                case "'": return '&apos;';
                case '"': return '&quot;';
            }
-           return ''; // Should not happen
+           return '';
        });
     };
     // --- End XML Escaping Helper ---
@@ -41,59 +40,80 @@
 
     // --- Check if it's an Album Page ---
     const albumInfoList = document.querySelector(albumInfoListSelector);
-    const isAlbumPage = !!albumInfoList; // true if element found, false otherwise
+    const isAlbumPage = !!albumInfoList;
 
     if (isAlbumPage) {
-        console.log('Detected page structure is for an Album (found ul.album-info). Image tag will be added to EACH TRACK.');
+        console.log('Detected page structure is for an Album (found ul.album-info). Image tag will be added at PLAYLIST level.');
     } else {
-        console.log('Detected page structure is NOT for an Album (ul.album-info not found). Image tag will be added to the PLAYLIST level.');
+        console.log('Detected page structure is NOT for an Album (ul.album-info not found). Image tag will NOT be added anywhere.');
     }
     // --- End Check if it's an Album Page ---
 
 
-    // --- Extract Album Info and Image (for filename suggestion and XSPF tags) ---
-    // This logic runs once before processing tracks.
-    // Album image URL is extracted REGARDLESS of isAlbumPage, as it might be needed for playlist level.
+    // --- Extract Album Info (Artist, Title, Year) and Image ---
     let albumArtist = 'Unknown Artist';
     let albumTitle = 'Unknown Album';
-    let albumYear = 'UnknownYear';
-    let albumImageUrl = null; // Variable to store the album image URL
-    let suggestedFilename = 'playlist.xspf'; // Default fallback filename for XSPF
+    let albumYear = 'UnknownYear'; // Default initialization
+    let albumImageUrl = null;
+    let suggestedFilename = 'playlist.xspf';
 
+    // --- Extract albumArtist using itemprop if it's an album page ---
+    if (isAlbumPage) {
+        const byArtistElement = document.querySelector(`${albumInfoListSelector} [itemprop=byArtist]`);
+        if (byArtistElement) {
+            albumArtist = byArtistElement.textContent.trim();
+            console.log(`[Album Artist] Found album artist via itemprop: ${albumArtist}`);
+        } else {
+            console.warn(`[Album Artist] Element with itemprop="byArtist" inside ${albumInfoListSelector} not found. Defaulting to Unknown Artist.`);
+        }
+
+        // --- NEW: Extract albumYear using itemprop/sibling if it's an album page ---
+        const datePublishedSiblingLink = document.querySelector(`${albumInfoListSelector} [itemprop=datePublished] ~ a`);
+        if (datePublishedSiblingLink) {
+            const yearText = datePublishedSiblingLink.textContent.trim();
+            const yearMatch = yearText.match(/\d{4}/); // Match a 4-digit number (e.g., 1997)
+            if (yearMatch && yearMatch[0]) {
+                albumYear = yearMatch[0];
+                console.log(`[Album Year] Found album year via itemprop sibling: ${albumYear}`);
+            } else {
+                console.warn(`[Album Year] Element with itemprop="datePublished" ~ a found, but could not extract 4-digit year from "${yearText}". Defaulting to UnknownYear.`);
+            }
+        } else {
+            console.warn(`[Album Year] Element with itemprop="datePublished" ~ a not found. Defaulting to UnknownYear.`);
+        }
+    }
+
+
+    // --- OLD LOGIC (modified): Extract albumTitle from header ---
+    // This is still useful for filename suggestion and the <album> tag in tracks.
     const albumHeaderElement = document.querySelector(albumHeaderSelector);
-    const albumImageElement = document.querySelector(albumImageSelector); // Find the album image element REGARDLESS of page type
-
-
     if (albumHeaderElement) {
          const headerText = albumHeaderElement.textContent.trim();
-         // Expected format: "Artist - Title (Year)"
-         const yearMatch = headerText.match(/\((\d{4})\)$/); // Regex to find (YYYY) at the end
+         let potentialTitleText = headerText; // Start with full text
 
-         let textBeforeYear = headerText;
-
-         if (yearMatch && yearMatch[1]) {
-             year = yearMatch[1]; // The captured year (e.g., "1997")
-             // Remove the year part from the main string
-             textBeforeYear = headerText.substring(0, yearMatch.index).trim();
-             albumYear = year; // Set the albumYear variable
-         } else {
-             console.warn(`[Album Info] Could not find (YYYY) year pattern at the end of "${headerText}".`);
+         // If we have an albumArtist from itemprop, and the header starts with it, try to remove it
+         // to get a cleaner title.
+         if (albumArtist !== 'Unknown Artist' && potentialTitleText.startsWith(albumArtist)) {
+            if (potentialTitleText.startsWith(`${albumArtist} - `)) {
+                potentialTitleText = potentialTitleText.substring(`${albumArtist} - `.length).trim();
+            }
          }
 
-         // Now parse "Artist - Title" from textBeforeYear
-         const separatorIndex = textBeforeYear.lastIndexOf(' - '); // Use lastIndexOf in case title has " - "
-
-         if (separatorIndex > 0) {
-             albumArtist = textBeforeYear.substring(0, separatorIndex).trim();
-             albumTitle = textBeforeYear.substring(separatorIndex + 3).trim(); // +3 for " - "
-         } else {
-             // No " - " found, use the whole part as the album title
-             albumTitle = textBeforeYear || albumTitle; // Use the whole part if not empty
-             console.warn(`[Album Info] Could not find " - " separator in "${textBeforeYear}".`);
+         // If we have an albumYear from itemprop, and the header ends with it, try to remove it.
+         // This makes the title extraction more robust.
+         if (albumYear !== 'UnknownYear' && potentialTitleText.endsWith(`(${albumYear})`)) {
+             potentialTitleText = potentialTitleText.substring(0, potentialTitleText.lastIndexOf(`(${albumYear})`)).trim();
+         } else if (albumYear !== 'UnknownYear' && potentialTitleText.endsWith(`${albumYear}`)) { // Less common, but just in case
+             potentialTitleText = potentialTitleText.substring(0, potentialTitleText.lastIndexOf(`${albumYear}`)).trim();
          }
+
+
+         // The remaining potentialTitleText should now be a good candidate for albumTitle.
+         albumTitle = potentialTitleText || 'Unknown Album';
+         console.log(`[Album Title] Extracted from header: ${albumTitle}`);
 
          // Construct the suggested filename: artist_dell_album (anno_dell_album) - titolo_dell_album.xspf
-         // Replace characters invalid for filenames with underscores
+         // Ensure albumArtist and albumYear are used here even if they came from itemprop
          suggestedFilename = `${albumArtist} (${albumYear}) - ${albumTitle}.xspf`.replace(/[\\/:*?"<>|]/g, '_');
 
          console.log(`Suggested filename: ${suggestedFilename}`);
@@ -102,10 +122,10 @@
          console.warn(`Album header (${albumHeaderSelector}) not found. Cannot suggest filename or populate album tag.`);
     }
 
-    // --- Image URL Extraction (Now happens regardless of isAlbumPage) ---
+    // --- Image URL Extraction (Same as before) ---
+    const albumImageElement = document.querySelector(albumImageSelector);
     if (albumImageElement) {
         if (albumImageElement.src) {
-            // Get the absolute image URL from the src property
             albumImageUrl = albumImageElement.src;
             console.log(`[Album Image] Found potential album image URL: ${albumImageUrl}`);
         } else {
@@ -119,23 +139,21 @@
 
 
     const actionAnchorElements = document.querySelectorAll(actionLinkSelector);
-    // This array will store the XML string for each <track> element
     const xspfTrackEntries = [];
 
-    console.log('--- Starting XSPF Playlist Extraction ---'); // Updated log message
+    console.log('--- Starting XSPF Playlist Extraction ---');
 
     if (actionAnchorElements.length > 0) {
         actionAnchorElements.forEach(function(actionAnchor, index) {
              if (actionAnchor.href) {
-                 const url = actionAnchor.href; // The URL is in the action link
+                 const url = actionAnchor.href;
 
-                 let durationInSeconds = -1; // Start with unknown duration (in seconds)
-                 let trackTitle = 'Unknown Track'; // Default fallback track title
-                 let trackArtist = 'Unknown Artist'; // Default fallback track artist
-                 let trackNumber = null; // Default fallback track number (null means tag will be omitted)
+                 let durationInSeconds = -1;
+                 let trackTitle = 'Unknown Track';
+                 let trackArtist = 'Unknown Artist';
+                 let trackNumber = null;
 
 
-                 // Risali l'albero del DOM per trovare l'elemento genitore .playlist__item
                  const playlistItem = actionAnchor.closest('.playlist__item');
 
                  if (playlistItem) {
@@ -184,8 +202,8 @@
 
                      if (trackNumElement) {
                          const numText = trackNumElement.textContent.trim();
-                         if (numText !== '') { // Only use the text if it's not empty
-                              trackNumber = numText; // Store the string value
+                         if (numText !== '') {
+                              trackNumber = numText;
                          } else {
                               console.warn(`[Item Index ${index}] ${trackNumberElementRelativeSelector} element found, but text content is empty.`);
                          }
@@ -196,13 +214,10 @@
 
 
                      // --- Construct XSPF <track> Entry ---
-                     // Build the XML string for this single track
-                     let trackXml = '    <track>\n'; // Indented for readability
+                     let trackXml = '    <track>\n';
 
-                     // Add location (URL), escaping special characters
                      trackXml += `      <location>${escapeXml(url)}</location>\n`;
 
-                     // Add duration in milliseconds if known
                      if (durationInSeconds !== -1) {
                          const durationInMilliseconds = durationInSeconds * 1000;
                          trackXml += `      <duration>${durationInMilliseconds}</duration>\n`;
@@ -210,34 +225,25 @@
                          console.warn(`[Item Index ${index}] Duration unknown, <duration> tag omitted.`);
                      }
 
-                     // Add creator (track artist), escaping special characters
                      if (trackArtist !== 'Unknown Artist') {
                           trackXml += `      <creator>${escapeXml(trackArtist)}</creator>\n`;
                      }
 
-                     // Add title (track title), escaping special characters
                      if (trackTitle !== 'Unknown Track') {
                           trackXml += `      <title>${escapeXml(trackTitle)}</title>\n`;
                      }
 
-                     // Add album title (from the extracted album info, assuming it applies to all tracks)
-                     // This is added regardless of isAlbumPage, as it's part of the track metadata if found
+                     // Add album title (from the extracted album info)
                      if (albumTitle !== 'Unknown Album') {
                          trackXml += `      <album>${escapeXml(albumTitle)}</album>\n`;
                      }
 
-                     // --- Conditionally Add Track Image Tag ---
-                     // Add the image tag *only if* it's an album page AND an album image URL was found
-                     if (isAlbumPage && albumImageUrl) {
-                          trackXml += `      <image>${escapeXml(albumImageUrl)}</image>\n`; // Add the tag, escaped and indented
-                     } else if (isAlbumPage && !albumImageUrl) {
-                          // Warning already issued during initial extraction if image not found on album page
-                     } // else if !isAlbumPage, image is handled at playlist level
+                     // --- Conditionally Add Track Image Tag --- (Still removed)
                      // --- End Conditionally Add Track Image Tag ---
 
 
                      // --- Add Track Number Tag ---
-                     if (trackNumber !== null) { // Only add the tag if a number was successfully extracted
+                     if (trackNumber !== null) {
                           trackXml += `      <trackNum>${escapeXml(trackNumber)}</trackNum>\n`;
                      } else {
                          console.warn(`[Item Index ${index}] <trackNum> tag omitted due to missing/empty position.`);
@@ -245,20 +251,18 @@
                      // --- End Add Track Number Tag ---
 
 
-                     trackXml += '    </track>'; // Closing track tag
+                     trackXml += '    </track>';
 
-                     xspfTrackEntries.push(trackXml); // Add the XML string for this track to the array
+                     xspfTrackEntries.push(trackXml);
 
                  } else {
                       console.warn(`[Item Index ${index}] The action link element is not contained within an expected .playlist__item parent.`);
-                      // No track entry added if parent not found
                  }
 
              } else {
-                 // Case: Found an action anchor, but without a valid href attribute
                  console.warn(`[Item Index ${index}] Found an action link element matching the selector but without a valid href attribute.`);
              }
-        }); // end forEach
+        });
 
 
         if (xspfTrackEntries.length > 0) {
@@ -268,35 +272,30 @@
             let xspfContent = '<?xml version="1.0" encoding="UTF-8"?>\n';
             xspfContent += '<playlist version="1.0" xmlns="http://xspf.org/ns/0/">\n';
 
-            // --- Add Playlist Location Tag --- (Keep this)
-            const pageUrl = location.href; // Get the current page URL
+            // --- Add Playlist Location Tag ---
+            const pageUrl = location.href;
             if (pageUrl) {
-                 xspfContent += `  <location>${escapeXml(pageUrl)}</location>\n`; // Add the tag, escaped and indented
+                 xspfContent += `  <location>${escapeXml(pageUrl)}</location>\n`;
             } else {
                  console.warn('Could not get page URL for playlist location tag.');
             }
             // --- End Add Playlist Location Tag ---
 
             // --- Conditionally Add Playlist Image Tag ---
-            // Add the image tag *only if* it's NOT an album page AND an album image URL was found
-            if (!isAlbumPage && albumImageUrl) {
-                xspfContent += `  <image>${escapeXml(albumImageUrl)}</image>\n`; // Add the tag, escaped and indented
-                console.log('Added playlist-level <image> tag.'); // Informative log
-            } else if (!isAlbumPage && !albumImageUrl) {
-                 console.warn('Playlist page detected, but no album image URL found. <image> tag omitted for playlist.');
-            } // else if isAlbumPage, image is handled at track level
+            if (isAlbumPage && albumImageUrl) {
+                xspfContent += `  <image>${escapeXml(albumImageUrl)}</image>\n`;
+                console.log('Added playlist-level <image> tag for Album page.');
+            } else if (isAlbumPage && !albumImageUrl) {
+                 console.warn('Album page detected, but no album image URL found. <image> tag omitted for playlist.');
+            } else {
+                 console.log('Not an Album page. <image> tag omitted for playlist.');
+            }
             // --- End Conditionally Add Playlist Image Tag ---
 
 
-            // Optional: Add playlist title from album info (still removed as per previous request)
-
-
             xspfContent += '  <trackList>\n';
-
-            // Join the individual track XML strings with a newline separator
             xspfContent += xspfTrackEntries.join('\n');
-
-            xspfContent += '\n  </trackList>\n'; // Add a newline before closing trackList tag for last track
+            xspfContent += '\n  </trackList>\n';
             xspfContent += '</playlist>';
             // --- End XSPF content construction ---
 
@@ -307,11 +306,11 @@
 
             const a = document.createElement('a');
             a.href = url;
-            a.download = suggestedFilename; // Use the suggested filename
-            document.body.appendChild(a); // Append to body (can be invisible)
-            a.click(); // Programmatically click the link to trigger download
-            document.body.removeChild(a); // Clean up the element
-            URL.revokeObjectURL(url); // Release the object URL
+            a.download = suggestedFilename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
 
             console.log(`XSPF file "${suggestedFilename}" downloaded successfully.`);
             // --- End Download ---
