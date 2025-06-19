@@ -101,8 +101,8 @@
          albumTitle = potentialTitleText || 'Unknown Album';
          console.log(`[Album Title] Extracted from header: ${albumTitle}`);
 
-         // --- MODIFICA QUI: Aggiungi "[Musify_club]" al nome del file ---
-         suggestedFilename = `[Musify_club] ${albumArtist} (${albumYear}) - ${albumTitle}.xspf`.replace(/[\\/:*?"<>|]/g, '_');
+         // --- Playlist final name
+         suggestedFilename = `${albumArtist} (${albumYear}) - ${albumTitle} [Musify_club].xspf`.replace(/[\\/:*?"<>|]/g, '_');
 
          console.log(`Suggested filename: ${suggestedFilename}`);
 
@@ -162,7 +162,7 @@
             } else {
                 console.warn(`[Item Index ${index}] Could not find track <a>.strong link. Defaulting to Unknown Track.`);
             }
-            // --- Fine Logica Artista/Titolo Traccia ---
+            // --- End Logic for Artist/Track ---
 
             // --- Duration Extraction (rimane invariata) ---
             const durationElement = playlistItem.querySelector(durationElementRelativeSelector);
