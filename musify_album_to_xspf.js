@@ -50,9 +50,9 @@
     // --- Extract Album Info (Artist, Title, Year) and Image ---
     let albumArtist = 'Unknown Artist';
     let albumTitle = 'Unknown Album';
-    let albumYear = 'UnknownYear'; // Default initialization
+    let albumYear = 'UnknownYear';
     let albumImageUrl = null;
-    let suggestedFilename = 'playlist.xspf';
+    let suggestedFilename = 'playlist.xspf'; // Default fallback filename
 
     // --- Extract albumArtist using itemprop if it's an album page ---
     if (isAlbumPage) {
@@ -64,12 +64,12 @@
             console.warn(`[Album Artist] Element with itemprop="byArtist" inside ${albumInfoListSelector} not found. Defaulting to Unknown Artist.`);
         }
 
-        // --- NEW LOGIC: Extract albumYear using datetime attribute ---
+        // --- Extract albumYear using datetime attribute ---
         const datePublishedElement = document.querySelector(`${albumInfoListSelector} [itemprop=datePublished]`);
         if (datePublishedElement && datePublishedElement.hasAttribute('datetime')) {
             const datetimeValue = datePublishedElement.getAttribute('datetime');
             if (datetimeValue && datetimeValue.length >= 4) {
-                albumYear = datetimeValue.slice(0, 4); // Take the first 4 characters
+                albumYear = datetimeValue.slice(0, 4);
                 console.log(`[Album Year] Found album year via datetime attribute: ${albumYear}`);
             } else {
                 console.warn(`[Album Year] Element with itemprop="datePublished" found, but datetime attribute is invalid or too short ("${datetimeValue}"). Defaulting to UnknownYear.`);
@@ -80,7 +80,7 @@
     }
 
 
-    // --- Extract albumTitle from header (remains mostly same, just uses updated albumArtist/Year) ---
+    // --- Extract albumTitle from header ---
     const albumHeaderElement = document.querySelector(albumHeaderSelector);
     if (albumHeaderElement) {
          const headerText = albumHeaderElement.textContent.trim();
@@ -95,13 +95,14 @@
          if (albumYear !== 'UnknownYear' && potentialTitleText.endsWith(`(${albumYear})`)) {
              potentialTitleText = potentialTitleText.substring(0, potentialTitleText.lastIndexOf(`(${albumYear})`)).trim();
          } else if (albumYear !== 'UnknownYear' && potentialTitleText.endsWith(`${albumYear}`)) {
-             potentialTitleText = potentialHext.substring(0, potentialTitleText.lastIndexOf(`${albumYear}`)).trim();
+             potentialTitleText = potentialTitleText.substring(0, potentialTitleText.lastIndexOf(`${albumYear}`)).trim();
          }
 
          albumTitle = potentialTitleText || 'Unknown Album';
          console.log(`[Album Title] Extracted from header: ${albumTitle}`);
 
-         suggestedFilename = `${albumArtist} (${albumYear}) - ${albumTitle}.xspf`.replace(/[\\/:*?"<>|]/g, '_');
+         // --- MODIFICA QUI: Aggiungi "[Musify_club]" al nome del file ---
+         suggestedFilename = `[Musify_club] ${albumArtist} (${albumYear}) - ${albumTitle}.xspf`.replace(/[\\/:*?"<>|]/g, '_');
 
          console.log(`Suggested filename: ${suggestedFilename}`);
 
@@ -109,7 +110,7 @@
          console.warn(`Album header (${albumHeaderSelector}) not found. Cannot suggest filename or populate album tag.`);
     }
 
-    // --- Image URL Extraction (Same as before) ---
+    // --- Image URL Extraction ---
     const albumImageElement = document.querySelector(albumImageSelector);
     if (albumImageElement) {
         if (albumImageElement.src) {
@@ -124,7 +125,7 @@
     // --- End Image URL Extraction ---
 
 
-    // --- Core Playlist Item Processing (remains same) ---
+    // --- Core Playlist Item Processing ---
     const allPlaylistItems = document.querySelectorAll('.playlist__item');
     const xspfTrackEntries = [];
 
@@ -147,7 +148,7 @@
             let trackArtist = 'Unknown Artist';
             let trackNumber = null;
 
-            // --- Logica per Artista e Titolo della Traccia (come concordato) ---
+            // --- Logica per Artista e Titolo della Traccia ---
             const artistLink = playlistItem.querySelector('a');
             if (artistLink) {
                 trackArtist = artistLink.textContent.trim() || 'Unknown Artist';
