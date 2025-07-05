@@ -1,167 +1,288 @@
-// Helper function to extract the playlist ID from the current browser URL
-function getPlaylistIdFromCurrentUrl() {
-  const url = window.location.href; // Gets the current page's URL
+(function() {
+    // Selector for the action links (those containing the track's URL)
+    const actionLinkSelector = 'div.playlist div.playlist__item div.playlist__actions a[download]';
 
-  // Regex to capture the playlist ID from various YouTube URL formats
-  // Examples it handles:
-  // - https://www.youtube.com/playlist?list=PLcCUOL3_Hly8RNuTy8lw1CV3wTKdKJuTU
-  // - https://www.youtube.com/watch?v=VIDEO_ID&list=PLcCUOL3_Hly8RNuTy8lw1CV3wTKdKJuTU
-  const playlistIdMatch = url.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+    // CORRECT Selector to find the element containing the duration *within* a playlist__item element.
+    const durationElementRelativeSelector = 'div.track__details:not(.track__rating) span.text-muted';
 
-  if (playlistIdMatch && playlistIdMatch[1]) {
-    return playlistIdMatch[1]; // Returns the captured playlist ID
-  } else {
-    console.warn("No playlist ID found in the current URL.");
-    return null; // Return null if no ID is found
-  }
-}
+    // Selector for the track position/number *within* a playlist__item element.
+    const trackNumberElementRelativeSelector = 'div.playlist__position';
 
-// --- Main Code Block ---
-async function getPlaylistVideosAndGenerateXSPF() {
-  // Attempt to get the playlist ID from the current page's URL
-  const playlistId = getPlaylistIdFromCurrentUrl();
+    // Selector for the album header (still used for album title, but not year or artist directly)
+    const albumHeaderSelector = 'header.content__title h1';
 
-  if (!playlistId) {
-    console.error("Cannot proceed: Playlist ID not found in the URL. Ensure you are on a valid YouTube playlist page (e.g., https://www.youtube.com/playlist?list=...).");
-    return; // Exit the function if no ID is found
-  }
+    // Selector for the album image (still needed to get the URL)
+    const albumImageSelector = 'img.album-img';
 
-  // Check if the playlist is an ALBUM (ID starts with "OLAK")
-  const isAlbum = playlistId.startsWith('OLAK');
+    // Selector to check if the page is an Album page (and base for itemprop extractions)
+    const albumInfoListSelector = 'ul.album-info';
 
-  // Choose an Invidious instance. You can find a list of instances here: https://docs.invidious.io/instances/
-  const invidiousInstance = 'https://inv.nadeko.net';
-  const apiUrl = `${invidiousInstance}/api/v1/playlists/${playlistId}`;
 
-  try {
-    const response = await fetch(apiUrl);
+    // --- XML Escaping Helper ---
+    const escapeXml = (unsafe) => {
+       if (unsafe === null || unsafe === undefined) return '';
+       return unsafe.toString().replace(/[<>&'"]/g, function (c) {
+           switch (c) {
+               case '<': return '&lt;';
+               case '>': return '&gt;';
+               case '&': return '&amp;';
+               case "'": return '&apos;';
+               case '"': return '&quot;';
+           }
+           return '';
+       });
+    };
+    // --- End XML Escaping Helper ---
 
-    // Check if the HTTP request was successful (status 200 OK)
-    if (!response.ok) {
-      // If you get a 404 or similar error, the playlist ID might be wrong,
-      // or the Invidious instance might be unreachable/not have the API active.
-      throw new Error(`HTTP Error! Status: ${response.status} - Check playlist ID or Invidious instance.`);
+
+    // --- Check if it's an Album Page ---
+    const albumInfoList = document.querySelector(albumInfoListSelector);
+    const isAlbumPage = !!albumInfoList;
+
+    if (isAlbumPage) {
+        console.log('Detected page structure is for an Album (found ul.album-info). Image tag will be added at PLAYLIST level.');
+    } else {
+        console.log('Detected page structure is NOT for an Album (ul.album-info not found). Image tag will NOT be added anywhere.');
     }
+    // --- End Check if it's an Album Page ---
 
-    const data = await response.json(); // Parse the response as JSON
 
-    // Check if the playlist contains videos
-    if (data.videos && data.videos.length > 0) {
-      let xspfContent = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-      xspfContent += `<playlist version="1" xmlns="http://xspf.org/ns/0/">\n`;
-      xspfContent += `  <trackList>\n`;
+    // --- Extract Album Info (Artist, Title, Year) and Image ---
+    let albumArtist = 'Unknown Artist';
+    let albumTitle = 'Unknown Album';
+    let albumYear = 'UnknownYear';
+    let albumImageUrl = null;
+    let suggestedFilename = 'playlist.xspf'; // Default fallback filename
 
-      // Get the artist name from the *first* video if it's an album, as this
-      // often represents the album artist. We'll clean it immediately.
-      let albumArtist = 'Unknown Artist';
-      if (isAlbum && data.videos[0] && data.videos[0].author) {
-          albumArtist = data.videos[0].author;
-          if (albumArtist.endsWith(' - Topic')) {
-              albumArtist = albumArtist.replace(' - Topic', '').trim(); // Trim any extra space after removal
-          }
-      }
-
-      data.videos.forEach(video => {
-        // Standard YouTube video link format
-        const youtubeLink = `https://www.youtube.com/watch?v=${video.videoId}`;
-        // Position in the playlist (add +1 to make it 1-based, if available)
-        const position = video.index !== undefined ? video.index + 1 : 'N/A';
-        const title = video.title || 'Unknown Title';
-        // Use 'let' for artist as it might be modified
-        let artist = video.author || 'Unknown Artist';
-        // Duration in milliseconds for XSPF format
-        const duration = video.lengthSeconds !== undefined ? video.lengthSeconds * 1000 : 0;
-
-        // Remove " - Topic" for ALL artists ***
-        if (artist.endsWith(' - Topic')) {
-          artist = artist.replace(' - Topic', '').trim(); // Trim any extra space after removal
+    // --- Extract albumArtist using itemprop if it's an album page ---
+    if (isAlbumPage) {
+        const byArtistElement = document.querySelector(`${albumInfoListSelector} [itemprop=byArtist]`);
+        if (byArtistElement) {
+            albumArtist = byArtistElement.textContent.trim();
+            console.log(`[Album Artist] Found album artist via itemprop: ${albumArtist}`);
+        } else {
+            console.warn(`[Album Artist] Element with itemprop="byArtist" inside ${albumInfoListSelector} not found. Defaulting to Unknown Artist.`);
         }
 
-        // Append <track> tags with details to the XSPF content
-        xspfContent += `    <track>\n`;
-        xspfContent += `      <trackNum>${position}</trackNum>\n`;
-        xspfContent += `      <title>${escapeXml(title)}</title>\n`; // Escape for special characters
-        xspfContent += `      <creator>${escapeXml(artist)}</creator>\n`; // Escape for special characters
-        xspfContent += `      <location>${escapeXml(youtubeLink)}</location>\n`; // Escape for special characters
-        xspfContent += `      <duration>${duration}</duration>\n`;
-        // Thumbnail part was removed as per user's request
-        xspfContent += `    </track>\n`;
-      });
-
-      xspfContent += `  </trackList>\n`;
-      xspfContent += `</playlist>`;
-
-      let playlistTitle = data.title || 'Unknown Playlist';
-      let fileName;
-
-      // If it's an ALBUM, modify the filename to be "Artist - AlbumName [Youtube].xspf"
-      if (isAlbum) {
-          // Remove "Album" (and any associated dash/space) from the playlist title
-          // Use a regex to catch "Album - ", "- Album", "Album", or " - Album"
-          playlistTitle = playlistTitle.replace(/(\s*-\s*Album|\s*Album\s*-|\s*Album)\s*/gi, '').trim();
-
-          // Construct the new filename: "Artist - Title [Youtube].xspf"
-          // Ensure there's only one dash between artist and title, and clean up extra spaces
-          fileName = `${albumArtist} - ${playlistTitle} [Youtube].xspf`.replace(/  +/g, ' ').trim();
-      } else {
-          // For non-albums, use the original format: "Playlist Title [Youtube].xspf"
-          fileName = `${playlistTitle} [Youtube].xspf`;
-      }
+        // --- Extract albumYear using datetime attribute ---
+        const datePublishedElement = document.querySelector(`${albumInfoListSelector} [itemprop=datePublished]`);
+        if (datePublishedElement && datePublishedElement.hasAttribute('datetime')) {
+            const datetimeValue = datePublishedElement.getAttribute('datetime');
+            if (datetimeValue && datetimeValue.length >= 4) {
+                albumYear = datetimeValue.slice(0, 4);
+                console.log(`[Album Year] Found album year via datetime attribute: ${albumYear}`);
+            } else {
+                console.warn(`[Album Year] Element with itemprop="datePublished" found, but datetime attribute is invalid or too short ("${datetimeValue}"). Defaulting to UnknownYear.`);
+            }
+        } else {
+            console.warn(`[Album Year] Element with itemprop="datePublished" or its datetime attribute not found. Defaulting to UnknownYear.`);
+        }
+    }
 
 
-      // Now, save the XSPF content as a file
-      saveXSPFFile(xspfContent, fileName);
+    // --- Extract albumTitle from header ---
+    const albumHeaderElement = document.querySelector(albumHeaderSelector);
+    if (albumHeaderElement) {
+         const headerText = albumHeaderElement.textContent.trim();
+         let potentialTitleText = headerText;
 
-      console.log(`XSPF content generated and attempting download as: ${fileName}`);
-      console.log('Check your downloads folder.');
+         if (albumArtist !== 'Unknown Artist' && potentialTitleText.startsWith(albumArtist)) {
+            if (potentialTitleText.startsWith(`${albumArtist} - `)) {
+                potentialTitleText = potentialTitleText.substring(`${albumArtist} - `.length).trim();
+            }
+         }
+
+         if (albumYear !== 'UnknownYear' && potentialTitleText.endsWith(`(${albumYear})`)) {
+             potentialTitleText = potentialTitleText.substring(0, potentialTitleText.lastIndexOf(`(${albumYear})`)).trim();
+         } else if (albumYear !== 'UnknownYear' && potentialTitleText.endsWith(`${albumYear}`)) {
+             potentialTitleText = potentialTitleText.substring(0, potentialTitleText.lastIndexOf(`${albumYear}`)).trim();
+         }
+
+         albumTitle = potentialTitleText || 'Unknown Album';
+         console.log(`[Album Title] Extracted from header: ${albumTitle}`);
+
+         // --- MODIFICA QUI: Aggiungi "[Musify_club]" al nome del file ---
+         suggestedFilename = `[Musify_club] ${albumArtist} (${albumYear}) - ${albumTitle}.xspf`.replace(/[\\/:*?"<>|]/g, '_');
+
+         console.log(`Suggested filename: ${suggestedFilename}`);
 
     } else {
-      console.log('No videos found in this playlist or invalid playlist ID.');
+         console.warn(`Album header (${albumHeaderSelector}) not found. Cannot suggest filename or populate album tag.`);
     }
 
-  } catch (error) {
-    console.error('An error occurred during playlist retrieval or XSPF generation:', error, '\nEnsure the Invidious instance URL is correct and the playlist ID is valid.');
-  }
-}
-
-// Helper function to escape special XML characters
-function escapeXml(unsafe) {
-    return unsafe.replace(/[<>&'"]/g, function (c) {
-        switch (c) {
-            case '<': return '<'; // Less than sign
-            case '>': return '>'; // Greater than sign
-            case '&': return '&'; // Ampersand
-            case '\'': return "'"; // Corrected: Single quote or apostrophe
-            case '"': return '"'; // Double quote
+    // --- Image URL Extraction ---
+    const albumImageElement = document.querySelector(albumImageSelector);
+    if (albumImageElement) {
+        if (albumImageElement.src) {
+            albumImageUrl = albumImageElement.src;
+            console.log(`[Album Image] Found potential album image URL: ${albumImageUrl}`);
+        } else {
+             console.warn(`[Album Image] Album image element (${albumImageSelector}) found, but src attribute is empty.`);
         }
-    });
-}
+    } else {
+        console.warn(`[Album Image] Album image element (${albumImageSelector}) not found.`);
+    }
+    // --- End Image URL Extraction ---
 
-// Function to save the generated XSPF content as a file via Blob
-function saveXSPFFile(content, fileName) {
-    // Create a Blob object with the XML content and correct MIME type
-    const blob = new Blob([content], { type: 'application/xspf+xml;charset=utf-8' });
 
-    // Create a temporary URL for the Blob
-    const url = URL.createObjectURL(blob);
+    // --- Core Playlist Item Processing ---
+    const allPlaylistItems = document.querySelectorAll('.playlist__item');
+    const xspfTrackEntries = [];
 
-    // Create a hidden <a> element to trigger download
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName; // Set the file name for download
+    console.log('--- Starting XSPF Playlist Extraction ---');
 
-    // Simulate a click on the <a> element to trigger the download
-    document.body.appendChild(a); // Appending is often needed for Firefox
-    a.click();
+    if (allPlaylistItems.length > 0) {
+        allPlaylistItems.forEach(function(playlistItem, index) {
+            const actionAnchor = playlistItem.querySelector(actionLinkSelector);
+            let url = null;
 
-    // Clean up: remove the <a> element and revoke the Blob URL to free up memory
-    document.body.removeChild(a); // Remove from DOM
-    URL.revokeObjectURL(url); // Release the object URL
-}
+            if (actionAnchor && actionAnchor.href) {
+                url = actionAnchor.href;
+            } else {
+                console.warn(`[Item Index ${index}] No valid download link found within this .playlist__item.`);
+                return;
+            }
 
-// --- Launch the main function on script execution ---
-// IMPORTANT: This code is intended to be run in a browser environment.
-// If you are on a YouTube page directly, you will likely need a browser extension
-// (e.g., using a Content Script) due to browser security restrictions
-// like Content Security Policy (CSP) and Same-Origin Policy).
-getPlaylistVideosAndGenerateXSPF();
+            let durationInSeconds = -1;
+            let trackTitle = 'Unknown Track';
+            let trackArtist = 'Unknown Artist';
+            let trackNumber = null;
+
+            // --- Logica per Artista e Titolo della Traccia ---
+            const artistLink = playlistItem.querySelector('a');
+            if (artistLink) {
+                trackArtist = artistLink.textContent.trim() || 'Unknown Artist';
+            } else {
+                console.warn(`[Item Index ${index}] Could not find artist <a> link. Defaulting to Unknown Artist.`);
+            }
+
+            const trackLinkStrong = playlistItem.querySelector('a.strong');
+            if (trackLinkStrong) {
+                trackTitle = trackLinkStrong.textContent.trim() || 'Unknown Track';
+            } else {
+                console.warn(`[Item Index ${index}] Could not find track <a>.strong link. Defaulting to Unknown Track.`);
+            }
+            // --- Fine Logica Artista/Titolo Traccia ---
+
+            // --- Duration Extraction (rimane invariata) ---
+            const durationElement = playlistItem.querySelector(durationElementRelativeSelector);
+            if (durationElement) {
+                const durationText = durationElement.textContent.trim();
+                const timeParts = durationText.split(':');
+                if (timeParts.length === 2) {
+                    const minutes = parseInt(timeParts[0], 10);
+                    const seconds = parseInt(timeParts[1], 10);
+                    if (!isNaN(minutes) && !isNaN(seconds)) {
+                        durationInSeconds = (minutes * 60) + seconds;
+                        if (durationInSeconds < 0) durationInSeconds = -1;
+                    } else {
+                        console.warn(`[Item Index ${index}] Could not convert minutes/seconds "${durationText}" to numbers.`);
+                    }
+                } else {
+                    console.warn(`[Item Index ${index}] Unexpected duration format "${durationText}" (expected MM:SS).`);
+                }
+            } else {
+                console.warn(`[Item Index ${index}] Duration element (${durationElementRelativeSelector}) not found in item.`);
+            }
+            // --- End Duration Extraction ---
+
+            // --- Track Number Extraction (rimane invariata) ---
+            const trackNumElement = playlistItem.querySelector(trackNumberElementRelativeSelector);
+            if (trackNumElement) {
+                const numText = trackNumElement.textContent.trim();
+                if (numText !== '') {
+                    trackNumber = numText;
+                } else {
+                    console.warn(`[Item Index ${index}] ${trackNumberElementRelativeSelector} element found, but text content is empty.`);
+                }
+            } else {
+                console.warn(`[Item Index ${index}] ${trackNumberElementRelativeSelector} element not found for item.`);
+            }
+            // --- End Track Number Extraction ---
+
+            // --- Construct XSPF <track> Entry (rimane invariata nella struttura) ---
+            let trackXml = '    <track>\n';
+            trackXml += `      <location>${escapeXml(url)}</location>\n`;
+            if (durationInSeconds !== -1) {
+                const durationInMilliseconds = durationInSeconds * 1000;
+                trackXml += `      <duration>${durationInMilliseconds}</duration>\n`;
+            } else {
+                console.warn(`[Item Index ${index}] Duration unknown, <duration> tag omitted.`);
+            }
+            if (trackArtist !== 'Unknown Artist') {
+                trackXml += `      <creator>${escapeXml(trackArtist)}</creator>\n`;
+            }
+            if (trackTitle !== 'Unknown Track') {
+                trackXml += `      <title>${escapeXml(trackTitle)}</title>\n`;
+            }
+            if (albumTitle !== 'Unknown Album') {
+                trackXml += `      <album>${escapeXml(albumTitle)}</album>\n`;
+            }
+            if (trackNumber !== null) {
+                trackXml += `      <trackNum>${escapeXml(trackNumber)}</trackNum>\n`;
+            } else {
+                console.warn(`[Item Index ${index}] <trackNum> tag omitted due to missing/empty position.`);
+            }
+            trackXml += '    </track>';
+
+            xspfTrackEntries.push(trackXml);
+        });
+
+
+        if (xspfTrackEntries.length > 0) {
+            console.log(`Formatted XSPF playlist with ${xspfTrackEntries.length} extracted tracks.`);
+
+            // --- Construct the full XSPF content ---
+            let xspfContent = '<?xml version="1.0" encoding="UTF-8"?>\n';
+            xspfContent += '<playlist version="1.0" xmlns="http://xspf.org/ns/0/">\n';
+
+            // --- Add Playlist Location Tag ---
+            const pageUrl = location.href;
+            if (pageUrl) {
+                 xspfContent += `  <location>${escapeXml(pageUrl)}</location>\n`;
+            } else {
+                 console.warn('Could not get page URL for playlist location tag.');
+            }
+            // --- End Add Playlist Location Tag ---
+
+            // --- Conditionally Add Playlist Image Tag ---
+            if (isAlbumPage && albumImageUrl) {
+                xspfContent += `  <image>${escapeXml(albumImageUrl)}</image>\n`;
+                console.log('Added playlist-level <image> tag for Album page.');
+            } else if (isAlbumPage && !albumImageUrl) {
+                 console.warn('Album page detected, but no album image URL found. <image> tag omitted for playlist.');
+            } else {
+                 console.log('Not an Album page. <image> tag omitted for playlist.');
+            }
+            // --- End Conditionally Add Playlist Image Tag ---
+
+
+            xspfContent += '  <trackList>\n';
+            xspfContent += xspfTrackEntries.join('\n');
+            xspfContent += '\n  </trackList>\n';
+            xspfContent += '</playlist>';
+            // --- End XSPF content construction ---
+
+
+            // --- Download the XSPF file ---
+            const blob = new Blob([xspfContent], { type: 'application/xspf+xml' });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = suggestedFilename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            console.log(`XSPF file "${suggestedFilename}" downloaded successfully.`);
+
+        } else {
+             console.warn('No valid XSPF tracks created. Verify the HTML structure and the presence of href, duration, and heading.');
+        }
+    } else {
+        console.warn(`No .playlist__item elements found on the page.`);
+    }
+    console.log('--- End Processing ---');
+})();
