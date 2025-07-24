@@ -72,24 +72,32 @@ async function getPlaylistVideosAndGenerateXSPF() {
         // Duration in milliseconds for XSPF format
         const duration = video.lengthSeconds !== undefined ? video.lengthSeconds * 1000 : 0;
 
-        // *** First, apply special title parsing logic for non-album playlists ***
-        // This logic runs only if it's a non-album playlist AND the artist is not a "Topic".
+        // *** LOGICA CORRETTA PER IL PARSING DEL TITOLO ***
+        // 1. First, check if it's a non-album playlist AND the artist name does not end with " - Topic".
         if (!isAlbum && !artist.endsWith(' - Topic')) {
-            const parts = title.split(' - ', 2);
-            if (parts.length === 2) {
-                artist = parts[0].trim();
-                // We've successfully split the title. Now, remove the numeric prefix from the title part.
-                let newTitle = parts[1].trim();
+            console.log('Original title:', title);
 
-                // Regex to remove numeric prefix like "01. " or "01 - "
-                newTitle = newTitle.replace(/^\d+\s*[.-]\s*/, '').trim();
+            // Regex per catturare artista, numero traccia e titolo in un'unica operazione
+            const regex = /^(.+?)\s*-\s*\d+\s*[.-]\s*(.+)$/;
+            const match = title.match(regex);
 
-                title = newTitle; // Assign the cleaned title
+            if (match) {
+                artist = match[1].trim();
+                title = match[2].trim();
+            } else {
+                // Se la regex non trova il formato, prova lo split semplice
+                const parts = title.split(' - ', 2);
+                if (parts.length === 2) {
+                    artist = parts[0].trim();
+                    title = parts[1].trim();
+                }
             }
+
+            console.log('Parsed artist:', artist);
+            console.log('Parsed title:', title);
         }
 
-        // *** Second, UNCONDITIONALLY remove " - Topic" from the artist name if present. ***
-        // This applies to ALL artists, regardless of album status or previous logic.
+        // 2. Second, UNCONDITIONALLY remove " - Topic" from the artist name if present.
         if (artist.endsWith(' - Topic')) {
             artist = artist.replace(' - Topic', '').trim();
         }
