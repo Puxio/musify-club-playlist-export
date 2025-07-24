@@ -66,15 +66,32 @@ async function getPlaylistVideosAndGenerateXSPF() {
         const youtubeLink = `https://www.youtube.com/watch?v=${video.videoId}`;
         // Position in the playlist (add +1 to make it 1-based, if available)
         const position = video.index !== undefined ? video.index + 1 : 'N/A';
-        const title = video.title || 'Unknown Title';
-        // Use 'let' for artist as it might be modified
+        // Use 'let' for artist and title as they might be modified
+        let title = video.title || 'Unknown Title';
         let artist = video.author || 'Unknown Artist';
         // Duration in milliseconds for XSPF format
         const duration = video.lengthSeconds !== undefined ? video.lengthSeconds * 1000 : 0;
 
-        // *** Remove " - Topic" for ALL artists, not just albums ***
+        // *** First, apply special title parsing logic for non-album playlists ***
+        // This logic runs only if it's a non-album playlist AND the artist is not a "Topic".
+        if (!isAlbum && !artist.endsWith(' - Topic')) {
+            const parts = title.split(' - ', 2);
+            if (parts.length === 2) {
+                artist = parts[0].trim();
+                // We've successfully split the title. Now, remove the numeric prefix from the title part.
+                let newTitle = parts[1].trim();
+
+                // Regex to remove numeric prefix like "01. " or "01 - "
+                newTitle = newTitle.replace(/^\d+\s*[.-]\s*/, '').trim();
+
+                title = newTitle; // Assign the cleaned title
+            }
+        }
+
+        // *** Second, UNCONDITIONALLY remove " - Topic" from the artist name if present. ***
+        // This applies to ALL artists, regardless of album status or previous logic.
         if (artist.endsWith(' - Topic')) {
-          artist = artist.replace(' - Topic', '').trim(); // Trim any extra space after removal
+            artist = artist.replace(' - Topic', '').trim();
         }
 
         // Append <track> tags with details to the XSPF content
