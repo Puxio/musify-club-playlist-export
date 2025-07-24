@@ -72,8 +72,8 @@ async function getPlaylistVideosAndGenerateXSPF() {
         // Duration in milliseconds for XSPF format
         const duration = video.lengthSeconds !== undefined ? video.lengthSeconds * 1000 : 0;
 
-        // If it's an ALBUM, remove " - Topic" from the artist's name
-        if (isAlbum && artist.endsWith(' - Topic')) {
+        // *** Remove " - Topic" for ALL artists, not just albums ***
+        if (artist.endsWith(' - Topic')) {
           artist = artist.replace(' - Topic', '').trim(); // Trim any extra space after removal
         }
 
@@ -131,7 +131,7 @@ function escapeXml(unsafe) {
             case '<': return '<'; // Less than sign
             case '>': return '>'; // Greater than sign
             case '&': return '&'; // Ampersand
-            case '\'': return "&apos;"; // *** THIS IS THE CRITICAL LINE MODIFIED ***
+            case '\'': return ''; // Corrected: Single quote or apostrophe
             case '"': return '"'; // Double quote
         }
     });
