@@ -1,4 +1,4 @@
-# musify.club and youtube export album/playst to xspf playlist
+# Youtube export album/playst to xspf playlist
 
 Export musify.club and youtube.com albums or playlist to xspf playlists and stream in your favourite player. 
 
