@@ -4,4 +4,6 @@ Export Musify.club and Youtube.com (albums or playlist) to xspf playlists and st
 
 Youtube use an Invidious public instance, change istance if it's not available.
 
+(Some Invidious instances doesn't accept CORS so use redirect)
+
 You need a Yotube capable player for Youtube playlist (ie. AIMP + Youtube plugin, PotPlayer)
